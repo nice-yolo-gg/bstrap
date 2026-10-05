@@ -1,28 +1,63 @@
-If you ever find yourself on a server and that server is specifically Ubuntu 24 LTS and you learn that apparently `apt-get install sudo` is a reasonable full command
-then perhaps you want to go ahead and automate part of the process.
+# Iris Micro Server & Agent Bootstrapper
 
-This script aims to do that for me. Perhaps someone that isn't me will learn. Hopefully it is not applied outright to non-suitable situations.
+```
+                   .---.
+                 /  .  \
+                |\_/ \_/|
+                |   o   |   IRIS PROVISIONER
+                |  ---  |   "Welcome, traveler! Let's get your system set up."
+                |_______|
+         ____/  \_____/  \____
+        /                     \
+       |  [O]               [O] |
+       |     \_____________/'   |
+       \_______________________/
+```
 
-### What is does:
+Iris is an interactive micro-image bootstrapper optimized for Ubuntu 24.04 / Debian LTS servers (8GB RAM, 100GB SSD, 4 vCPU). It streamlines base system setup, agent/user provisioning, firewall configuration, developer tooling, and kernel performance tuning.
 
-1. Installs stuff in reasonable order (for a server with 8GB ram and 4vCPU. Possible with less it will choke a bit i'd personally split it up if so.
+---
 
-2. speedily makes sure you wont have to keep logging in as root, the use of the install command reliably achieves correct settings for a non root account for you. Two, even.
+### Key Features
 
-3. Gets a hold of eza and gh cli even though its not as readily available as the rest of the packages. Because I like those.
+1. **OS Compatibility Guard**: Automatically verifies that `apt-get` is available (Debian/Ubuntu) and warns non-supported distributions.
+2. **Interactive Configuration**: Offers interactive choices with pre-selected sensible defaults (press `[Enter]` to accept defaults).
+3. **Priority Package & Firewall Setup**: Stage 1 installs essential packages (`zsh`, `systemd`, `dbus`, `ufw`, `sudo`, `git`) and immediately enables UFW with SSH (port 22) permitted.
+4. **Read-Only Color-Coded Verification**: Automatically runs background checks after execution stages to print color-coded green (`PASS`), yellow (`WARN`), and red (`FAIL`) status summaries.
+5. **Mature User & Agent Provisioning**:
+   - Standing user groups configuration (defaults: `unity`, `guide`, `security`, `operations`).
+   - Configurable primary and spare user creation (`emma` and `lucy` by default).
+   - All users are placed in the non-privileged `unity` group by default.
+   - Optional passwordless sudo configuration.
+   - Enables DBus session persistence via `loginctl enable-linger`.
+6. **Agent Provisioning Helper (`newguy`)**:
+   - Installs `/usr/local/sbin/newguy` to easily provision new coding agents and users on the fly with `unity` group membership and linger enabled.
+7. **Kernel Performance Tuning & Security**:
+   - High-performance kernel parameters via `/etc/sysctl.d/98-local.conf` (`vm.max_map_count`, `fs.inotify`, `fs.file-max`, `kernel.pid_max`).
+   - Optional direct root SSH login lockdown (`PermitRootLogin no`) with explicit lockout warnings.
 
-4. Generates four user groups. That's something I happened to need.
+---
 
-5. Packs something up, I forgot what, in a 7z archive with a decent password. Obviously no point if is also displayed on line. Will delete the whole concept
+### Usage
 
-### Incoming additional improvements
+Run as `root`:
 
-1. Iris is incoming. Iris is an NPC who provisions new users with linger and dbus and pam and the whole package you see.  This leads to an ability to call coding bots on the phone and other things not being broke Irish developed quickly to do some minor additional things Not things that was particularly needed but it's handy and if expanded greatly she'll be one with the script.
+```bash
+sudo ./iris.sh
+```
 
-### Planned Additions:
+To provision a new agent user at any time:
 
-1. If you try to run with a distro that doesn't have  apt, it should tell you its a waste of time
+```bash
+sudo newguy steve
+```
 
-2. Configure your user accounts, apply any number under something reasonable, and then name them all by hand.
+---
 
-3. 
+### Execution Stages Overview
+
+- **Stage 1**: Core System, D-Bus & UFW Firewall (Port 22 SSH enabled immediately)
+- **Stage 2**: Standing Groups & User Accounts (`emma`, `lucy`, or custom)
+- **Stage 3A & 3B**: System Utilities, Networking & Diagnostics
+- **Stage 4**: Repositories & Tooling (`gh` CLI, `eza`, build tools, system monitors)
+- **Stage 5**: Kernel Tuning & Root SSH Lockdown
