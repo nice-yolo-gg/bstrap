@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-#       Micro Image Bootstrapper
-#       Ubuntu 24.04 LTS (8GB RAM, 100GB SSD, 4 vCPU)
+#       Iris On-Host Operations Companion & Micro Image Bootstrapper
+#       Ubuntu 24.04 LTS
 #
 set -uo pipefail
 export DEBIAN_FRONTEND=noninteractive
@@ -19,7 +19,7 @@ STATE_FILE="/var/tmp/micro-installer.state"
 mkdir -p "$(dirname "$LOG_FILE")"
 : > "$STATE_FILE"
 
-# Logging helper: strip ANSI color codes for file log while printing formatted output to stdout
+# Logging helper
 log() {
     local level="$1"
     shift
@@ -34,19 +34,18 @@ log() {
 
 banner() {
     cat <<'EOF'
-  _____ ______ _______ _    _ _____     ___
- / ____|  ____|__   __| |  | |  __ \   / _ \
-| (___ | |__     | |  | |  | | |__) | | | | |
- \___ \|  __|    | |  | |  | |  ___/  | | | |
- ____) | |____   | |  | |__| | |      | |_| |
-|_____/|______|  |_|   \____/|_|       \___/
+  _____ _____  _____  _____
+ |_   _|  __ \|_   _|/ ____|
+   | | | |__) | | | | (___
+   | | |  _  /  | |  \___ \
+  _| |_| | \ \ _| |_ ____) |
+ |_____|_|  \_\_____|_____/
 
-    Ubuntu 24 LTS Micro Image Bootstrapper
-  [ 8 GB RAM | 100 GB SSD | 4 vCPU Optimized ]
+    Iris Ubuntu 24 LTS Micro Image Bootstrapper
+  [ On-Host Operations Steward & Stationary Companion ]
 EOF
 }
 
-# Helpers
 ask_yes_no() {
     local reply
     read -rp "$1 [y/N]: " reply
@@ -185,6 +184,12 @@ if ! ask_yes_no "Run base setup?"; then
     exit 0
 fi
 
+# Check distro requirement (apt-get check)
+if ! command -v apt-get >/dev/null 2>&1; then
+    log "ERROR" "\e[31m[X] This system does not use apt package manager. Iris requires Ubuntu / Debian.\e[0m"
+    exit 1
+fi
+
 # Stage 0: Initial environment, standing groups & users
 log "INFO" "\n==================================================="
 log "INFO" " STAGE 0: Base System, Standing Groups & Users"
@@ -234,10 +239,26 @@ STAGE1_PACKAGES=(
     "systemd-timesyncd"
     "dbus"
     "git"
+    "golang-go"
     "dbus-user-session"
 )
 
 install_package_list 1 "${STAGE1_PACKAGES[@]}"
+
+# Firewall setup (Separated step after Stage 1 package installation)
+log "INFO" "\n==================================================="
+log "INFO" " STAGE 1b: Firewall & Security Network Rules"
+log "INFO" "==================================================="
+log "INFO" "\n[*] Configuring UFW Firewall..."
+if command -v ufw >/dev/null 2>&1; then
+    if ufw status 2>/dev/null | awk '/^Status: active/{f=1} END{exit !f}' && ufw status 2>/dev/null | awk '/^22(\/tcp)?[[:space:]]+ALLOW/{f=1} END{exit !f}'; then
+        log "INFO" "\e[32m[+] ufw already active with 22/tcp allowed.\e[0m"
+    else
+        ufw allow 22 >/dev/null 2>&1 || true
+        ufw --force enable >/dev/null 2>&1 || true
+        log "INFO" "\e[32m[+] ufw enabled with SSH (port 22) permitted.\e[0m"
+    fi
+fi
 
 # Convenience shims
 mkdir -p /usr/local/bin
@@ -249,18 +270,6 @@ fi
 if ! command -v bat >/dev/null 2>&1 && command -v batcat >/dev/null 2>&1; then
     ln -sf "$(command -v batcat)" /usr/local/bin/bat
     log "INFO" "[*] Symlinked batcat -> bat"
-fi
-
-# Firewall setup
-log "INFO" "\n[*] Configuring UFW Firewall..."
-if command -v ufw >/dev/null 2>&1; then
-    if ufw status 2>/dev/null | awk '/^Status: active/{f=1} END{exit !f}' && ufw status 2>/dev/null | awk '/^22(\/tcp)?[[:space:]]+ALLOW/{f=1} END{exit !f}'; then
-        log "INFO" "\e[32m[+] ufw already active with 22/tcp allowed.\e[0m"
-    else
-        ufw allow 22 >/dev/null 2>&1 || true
-        ufw --force enable >/dev/null 2>&1 || true
-        log "INFO" "\e[32m[+] ufw enabled with SSH (port 22) permitted.\e[0m"
-    fi
 fi
 
 # Stage 2: System Utilities & Diagnostics
@@ -294,6 +303,7 @@ STAGE2_PACKAGES=(
     "psmisc"
     "ripgrep"
     "fail2ban"
+    "putty-tools"
     "libpam-systemd"
     "software-properties-common"
     "unattended-upgrades"
@@ -362,6 +372,30 @@ STAGE3_PACKAGES=(
 )
 
 install_package_list 3 "${STAGE3_PACKAGES[@]}"
+
+# Stage 4: Compile & Install Stationary Iris Companion Binary
+log "INFO" "\n==================================================="
+log "INFO" " STAGE 4: Stationary Iris Companion Binary Build"
+log "INFO" "==================================================="
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -d "$SCRIPT_DIR/cmd/iris" ]]; then
+    log "INFO" "[*] Compiling Iris Companion binary..."
+    if go build -o /usr/local/sbin/iris "$SCRIPT_DIR/cmd/iris/main.go"; then
+        chmod 755 /usr/local/sbin/iris
+        log "INFO" "\e[32m[OK] Iris installed to /usr/local/sbin/iris\e[0m"
+        # Run auto-tune automatically during setup
+        /usr/local/sbin/iris tune || true
+    else
+        log "ERROR" "\e[31m[X] Failed to compile Iris binary.\e[0m"
+    fi
+fi
+
+# Symlink setup.sh -> iris.sh for legacy support
+if [[ -f "$SCRIPT_DIR/setup.sh" && ! -f "$SCRIPT_DIR/iris.sh" ]]; then
+    ln -sf "$SCRIPT_DIR/setup.sh" "$SCRIPT_DIR/iris.sh"
+    log "INFO" "[*] Created symlink iris.sh -> setup.sh"
+fi
 
 # Encrypted kit extraction
 KIT_PATH="/root/kit.7z"
