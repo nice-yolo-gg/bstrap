@@ -30,46 +30,106 @@ func captureOutput(fn func()) string {
 	return buf.String()
 }
 
-func TestParseShellChoice(t *testing.T) {
+func TestParseNewUserArgs(t *testing.T) {
 	tests := []struct {
-		name     string
-		args     []string
-		expected string
+		name          string
+		args          []string
+		wantUsername  string
+		wantShell     string
+		wantErrSubstr string
 	}{
 		{
-			name:     "empty args",
-			args:     []string{},
-			expected: "",
+			name:         "standard user only",
+			args:         []string{"agent1"},
+			wantUsername: "agent1",
+			wantShell:    "",
 		},
 		{
-			name:     "valid shell flag zsh",
-			args:     []string{"--shell", "/usr/bin/zsh"},
-			expected: "/usr/bin/zsh",
+			name:         "username before --shell",
+			args:         []string{"agent1", "--shell", "/usr/bin/zsh"},
+			wantUsername: "agent1",
+			wantShell:    "/usr/bin/zsh",
 		},
 		{
-			name:     "valid shell flag bash",
-			args:     []string{"--shell", "/bin/bash"},
-			expected: "/bin/bash",
+			name:         "username after --shell",
+			args:         []string{"--shell", "/usr/bin/zsh", "agent1"},
+			wantUsername: "agent1",
+			wantShell:    "/usr/bin/zsh",
 		},
 		{
-			name:     "missing shell flag value",
-			args:     []string{"--shell"},
-			expected: "",
+			name:         "--shell with equals sign",
+			args:         []string{"--shell=/bin/bash", "agent1"},
+			wantUsername: "agent1",
+			wantShell:    "/bin/bash",
 		},
 		{
-			name:     "flag among other args",
-			args:     []string{"somearg", "--shell", "/bin/sh", "otherarg"},
-			expected: "/bin/sh",
+			name:          "missing argument for --shell",
+			args:          []string{"agent1", "--shell"},
+			wantErrSubstr: "requires an argument",
+		},
+		{
+			name:          "missing argument for --shell=",
+			args:          []string{"agent1", "--shell="},
+			wantErrSubstr: "requires an argument",
+		},
+		{
+			name:          "unknown flag",
+			args:          []string{"agent1", "--invalid"},
+			wantErrSubstr: "unknown flag",
+		},
+		{
+			name:          "multiple positional arguments",
+			args:          []string{"agent1", "extra_arg"},
+			wantErrSubstr: "unexpected positional argument",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := parseShellChoice(tt.args)
-			if got != tt.expected {
-				t.Errorf("parseShellChoice(%v) = %q, want %q", tt.args, got, tt.expected)
+			gotUser, gotShell, err := parseNewUserArgs(tt.args)
+			if tt.wantErrSubstr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErrSubstr) {
+					t.Errorf("parseNewUserArgs(%v) error = %v, want substring %q", tt.args, err, tt.wantErrSubstr)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("parseNewUserArgs(%v) unexpected error: %v", tt.args, err)
+				}
+				if gotUser != tt.wantUsername || gotShell != tt.wantShell {
+					t.Errorf("parseNewUserArgs(%v) = (%q, %q), want (%q, %q)", tt.args, gotUser, gotShell, tt.wantUsername, tt.wantShell)
+				}
 			}
 		})
+	}
+}
+
+func TestResolveShellPath(t *testing.T) {
+	origLookPath := lookPath
+	defer func() { lookPath = origLookPath }()
+
+	lookPath = func(file string) (string, error) {
+		if file == "zsh" || file == "/usr/bin/zsh" {
+			return "/usr/bin/zsh", nil
+		}
+		return "", errors.New("not found")
+	}
+
+	// Empty shell choice
+	p, err := resolveShellPath("")
+	if err != nil || p != "" {
+		t.Errorf("resolveShellPath(\"\") = (%q, %v), want (\"\", nil)", p, err)
+	}
+
+	// Shorthand zsh
+	p, err = resolveShellPath("zsh")
+	if err != nil || p != "/usr/bin/zsh" {
+		t.Errorf("resolveShellPath(\"zsh\") = (%q, %v), want (\"/usr/bin/zsh\", nil)", p, err)
+	}
+
+	// Invalid shell
+	_, err = resolveShellPath("invalidshell")
+	if err == nil || !strings.Contains(err.Error(), "not found or not executable") {
+		t.Errorf("expected error for invalidshell, got %v", err)
 	}
 }
 
@@ -517,6 +577,14 @@ func TestRunNewUserAndPuTTYKeys(t *testing.T) {
 
 	if !strings.Contains(out, "Iris provisioning account: testuser") {
 		t.Errorf("Expected provisioning msg, got:\n%s", out)
+	}
+
+	if !strings.Contains(out, "Added testuser to groups: unity") {
+		t.Errorf("Expected strictly unity group membership, got:\n%s", out)
+	}
+
+	if !strings.Contains(out, "Primed D-Bus session for testuser via machinectl") {
+		t.Errorf("Expected machinectl D-Bus session priming, got:\n%s", out)
 	}
 
 	userAuthKeysPath := filepath.Join(homeDir, "testuser", ".ssh", "authorized_keys")
