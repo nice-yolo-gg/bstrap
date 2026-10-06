@@ -51,8 +51,15 @@ func runApp(args []string) {
 			return
 		}
 		requireRoot("iris new")
-		username := args[2]
-		shellChoice := parseShellChoice(args[3:])
+		username, shellChoice, err := parseNewUserArgs(args[2:])
+		if err != nil || username == "" {
+			if err != nil {
+				fmt.Fprintf(stdout, "Error: %v\n", err)
+			}
+			fmt.Fprintln(stdout, "Usage: iris new <username> [--shell /bin/bash|/usr/bin/zsh]")
+			exitFunc(1)
+			return
+		}
 		runNewUser(username, shellChoice)
 
 	case "tune":
@@ -178,13 +185,52 @@ func checkCLIIntegrations() {
 	}
 }
 
-func parseShellChoice(args []string) string {
+func parseNewUserArgs(args []string) (string, string, error) {
+	var username string
+	var shellChoice string
+
 	for i := 0; i < len(args); i++ {
-		if args[i] == "--shell" && i+1 < len(args) {
-			return args[i+1]
+		arg := args[i]
+		if arg == "--shell" {
+			if i+1 < len(args) {
+				shellChoice = args[i+1]
+				i++
+			} else {
+				return "", "", fmt.Errorf("flag '--shell' requires an argument")
+			}
+		} else if strings.HasPrefix(arg, "--shell=") {
+			shellChoice = strings.TrimPrefix(arg, "--shell=")
+			if shellChoice == "" {
+				return "", "", fmt.Errorf("flag '--shell' requires an argument")
+			}
+		} else if strings.HasPrefix(arg, "-") {
+			return "", "", fmt.Errorf("unknown flag: %s", arg)
+		} else {
+			if username == "" {
+				username = arg
+			} else {
+				return "", "", fmt.Errorf("unexpected positional argument: %s", arg)
+			}
 		}
 	}
-	return ""
+
+	return username, shellChoice, nil
+}
+
+func parseShellChoice(args []string) string {
+	_, shell, _ := parseNewUserArgs(args)
+	return shell
+}
+
+func resolveShellPath(shellChoice string) (string, error) {
+	if shellChoice == "" {
+		return "", nil
+	}
+	path, err := lookPath(shellChoice)
+	if err != nil {
+		return "", fmt.Errorf("shell binary %q not found or not executable", shellChoice)
+	}
+	return path, nil
 }
 
 func runNewUser(username string, shellChoice string) {
@@ -209,6 +255,13 @@ func runNewUser(username string, shellChoice string) {
 		}
 	}
 
+	resolvedShell, err := resolveShellPath(shellChoice)
+	if err != nil {
+		fmt.Fprintf(stdout, "Failed to resolve shell %s: %v\n", shellChoice, err)
+		return
+	}
+	shellChoice = resolvedShell
+
 	// Create user if not exists
 	if _, err := execCommand("id", username).Output(); err != nil {
 		cmd := execCommand("adduser", "--disabled-password", "--gecos", "", "--shell", shellChoice, username)
@@ -224,8 +277,8 @@ func runNewUser(username string, shellChoice string) {
 		_ = execCommand("chsh", "-s", shellChoice, username).Run()
 	}
 
-	// Add to sudo and standing groups
-	groups := []string{"sudo", UnityGroup, "guide", "security", "operations"}
+	// Restrict group membership strictly to unity group
+	groups := []string{UnityGroup}
 	for _, grp := range groups {
 		_ = execCommand("addgroup", grp).Run()
 		_ = execCommand("adduser", username, grp).Run()
@@ -235,6 +288,10 @@ func runNewUser(username string, shellChoice string) {
 	// Enable D-Bus session linger
 	_ = execCommand("loginctl", "enable-linger", username).Run()
 	fmt.Fprintf(stdout, "[+] Enabled loginctl linger for %s\n", username)
+
+	// Prime non-interactive user bus via machinectl
+	_ = execCommand("machinectl", "shell", username+"@", "/usr/bin/true").Run()
+	fmt.Fprintf(stdout, "[+] Primed D-Bus session for %s via machinectl\n", username)
 
 	// Handle SSH Keys (copy root keys & check for PuTTY .ppk keys)
 	sshDir := filepath.Join(homeBaseDir, username, ".ssh")
